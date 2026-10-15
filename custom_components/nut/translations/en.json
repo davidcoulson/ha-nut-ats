@@ -156,7 +156,6 @@
       "battery_charger_status": {
         "name": "Charging status",
         "state": {
-          "charged": "Charged",
           "charging": "Charging",
           "disabled": "Disabled",
           "discharging": "Discharging",
