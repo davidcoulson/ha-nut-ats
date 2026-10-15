@@ -1,0 +1,5 @@
+{
+  "name": "Network UPS Tools (NUT) with ATS sensors",
+  "homeassistant": "2026.10.1",
+  "render_readme": true
+}
