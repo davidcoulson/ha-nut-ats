@@ -216,7 +216,9 @@ class NutConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             nut_config.update(user_input)
 
-            info, errors, placeholders = await self._async_validate_or_error(nut_config)
+            info, errors, placeholders = await self._async_validate_reconfigure(
+                nut_config
+            )
 
             if not errors:
                 if len(info["ups_list"]) > 1:
@@ -232,7 +234,7 @@ class NutConfigFlow(ConfigFlow, domain=DOMAIN):
                 if unique_id := _unique_id_from_status(info["available_resources"]):
                     await self.async_set_unique_id(unique_id)
                     self._abort_if_unique_id_mismatch(reason="unique_id_mismatch")
-                if nut_config[CONF_PASSWORD] == PASSWORD_NOT_CHANGED:
+                if nut_config.get(CONF_PASSWORD) == PASSWORD_NOT_CHANGED:
                     nut_config.pop(CONF_PASSWORD)
 
                 new_title = _format_host_port_alias(nut_config)
@@ -272,13 +274,15 @@ class NutConfigFlow(ConfigFlow, domain=DOMAIN):
             ) and (self._host_port_alias_already_configured(nut_config)):
                 return self.async_abort(reason="already_configured")
 
-            info, errors, placeholders = await self._async_validate_or_error(nut_config)
+            info, errors, placeholders = await self._async_validate_reconfigure(
+                nut_config
+            )
             if not errors:
                 if unique_id := _unique_id_from_status(info["available_resources"]):
                     await self.async_set_unique_id(unique_id)
                     self._abort_if_unique_id_mismatch(reason="unique_id_mismatch")
 
-                if nut_config[CONF_PASSWORD] == PASSWORD_NOT_CHANGED:
+                if nut_config.get(CONF_PASSWORD) == PASSWORD_NOT_CHANGED:
                     nut_config.pop(CONF_PASSWORD)
 
                 new_title = _format_host_port_alias(nut_config)
@@ -295,6 +299,17 @@ class NutConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders=placeholders,
         )
+
+    async def _async_validate_reconfigure(
+        self, config: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, str], dict[str, str]]:
+        """Resolve the password marker only in the validation copy."""
+        validation_config = dict(config)
+        if validation_config.get(CONF_PASSWORD) == PASSWORD_NOT_CHANGED:
+            validation_config.pop(CONF_PASSWORD)
+            if CONF_PASSWORD in (saved_data := self._get_reconfigure_entry().data):
+                validation_config[CONF_PASSWORD] = saved_data[CONF_PASSWORD]
+        return await self._async_validate_or_error(validation_config)
 
     def _host_port_alias_already_configured(self, user_input: dict[str, Any]) -> bool:
         """See if we already have a nut entry matching user input configured."""

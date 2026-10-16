@@ -8,7 +8,7 @@ from homeassistant.components.button import (
     ButtonEntity,
     ButtonEntityDescription,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import outlet_numbers_from_status
@@ -28,35 +28,54 @@ async def async_setup_entry(
     """Set up the NUT buttons."""
     pynut_data = config_entry.runtime_data
     coordinator = pynut_data.coordinator
-    status = coordinator.data
+    discovered: set[str] = set()
 
-    outlet_numbers = outlet_numbers_from_status(status)
-    if not outlet_numbers:
-        return
+    @callback
+    def async_discover_entities() -> None:
+        """Add newly available entities once during this entry's lifetime."""
+        if not coordinator.last_update_success:
+            return
+        status = coordinator.data
 
-    data = pynut_data.data
-    unique_id = pynut_data.unique_id
-    valid_button_types: dict[str, ButtonEntityDescription] = {}
-    for outlet_num in sorted(outlet_numbers):
-        outlet_name: str = (
-            status.get(f"outlet.{outlet_num}.name")
-            or status.get(f"outlet.{outlet_num}.desc")
-            or str(outlet_num)
+        outlet_numbers = outlet_numbers_from_status(status)
+        if not outlet_numbers:
+            return
+
+        data = pynut_data.data
+        unique_id = pynut_data.unique_id
+        valid_button_types: dict[str, ButtonEntityDescription] = {}
+        for outlet_num in sorted(outlet_numbers):
+            outlet_name: str = (
+                status.get(f"outlet.{outlet_num}.name")
+                or status.get(f"outlet.{outlet_num}.desc")
+                or str(outlet_num)
+            )
+            valid_button_types |= {
+                f"outlet.{outlet_num}.load.cycle": ButtonEntityDescription(
+                    key=f"outlet.{outlet_num}.load.cycle",
+                    translation_key="outlet_number_load_cycle",
+                    translation_placeholders={"outlet_name": outlet_name},
+                    device_class=ButtonDeviceClass.RESTART,
+                ),
+            }
+
+        async_add_entities(
+            [
+                NUTButton(coordinator, description, data, unique_id)
+                for button_id, description in valid_button_types.items()
+                if button_id in pynut_data.user_available_commands
+                and button_id not in discovered
+            ]
         )
-        valid_button_types |= {
-            f"outlet.{outlet_num}.load.cycle": ButtonEntityDescription(
-                key=f"outlet.{outlet_num}.load.cycle",
-                translation_key="outlet_number_load_cycle",
-                translation_placeholders={"outlet_name": outlet_name},
-                device_class=ButtonDeviceClass.RESTART,
-            ),
-        }
 
-    async_add_entities(
-        NUTButton(coordinator, description, data, unique_id)
-        for button_id, description in valid_button_types.items()
-        if button_id in pynut_data.user_available_commands
+        discovered.update(
+            valid_button_types.keys() & pynut_data.user_available_commands
+        )
+
+    config_entry.async_on_unload(
+        coordinator.async_add_listener(async_discover_entities)
     )
+    async_discover_entities()
 
 
 class NUTButton(NUTBaseEntity, ButtonEntity):

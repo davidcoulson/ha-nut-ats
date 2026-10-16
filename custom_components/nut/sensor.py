@@ -21,7 +21,7 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfTime,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import outlet_numbers_from_status
@@ -1079,98 +1079,115 @@ async def async_setup_entry(
     coordinator = pynut_data.coordinator
     data = pynut_data.data
     unique_id = pynut_data.unique_id
-    status = coordinator.data
+    discovered: set[str] = set()
 
-    additional_sensor_types: dict[str, SensorEntityDescription] = {}
+    @callback
+    def async_discover_entities() -> None:
+        """Add newly available entities once during this entry's lifetime."""
+        if not coordinator.last_update_success:
+            return
+        status = coordinator.data
 
-    # Dynamically add outlet sensors to valid sensors dictionary
-    if outlet_numbers := outlet_numbers_from_status(status):
-        for outlet_num in sorted(outlet_numbers):
-            outlet_num_str: str = str(outlet_num)
-            outlet_name: str = (
-                status.get(f"outlet.{outlet_num_str}.name")
-                or status.get(f"outlet.{outlet_num_str}.desc")
-                or outlet_num_str
-            )
-            additional_sensor_types |= {
-                f"outlet.{outlet_num_str}.current": SensorEntityDescription(
-                    key=f"outlet.{outlet_num_str}.current",
-                    translation_key="outlet_number_current",
-                    translation_placeholders={"outlet_name": outlet_name},
-                    native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-                    device_class=SensorDeviceClass.CURRENT,
-                    state_class=SensorStateClass.MEASUREMENT,
-                ),
-                f"outlet.{outlet_num_str}.current_status": SensorEntityDescription(
-                    key=f"outlet.{outlet_num_str}.current_status",
-                    translation_key="outlet_number_current_status",
-                    translation_placeholders={"outlet_name": outlet_name},
-                    entity_category=EntityCategory.DIAGNOSTIC,
-                    entity_registry_enabled_default=False,
-                ),
-                f"outlet.{outlet_num_str}.desc": SensorEntityDescription(
-                    key=f"outlet.{outlet_num_str}.desc",
-                    translation_key="outlet_number_desc",
-                    translation_placeholders={"outlet_name": outlet_name},
-                ),
-                f"outlet.{outlet_num_str}.power": SensorEntityDescription(
-                    key=f"outlet.{outlet_num_str}.power",
-                    translation_key="outlet_number_power",
-                    translation_placeholders={"outlet_name": outlet_name},
-                    native_unit_of_measurement=UnitOfApparentPower.VOLT_AMPERE,
-                    device_class=SensorDeviceClass.APPARENT_POWER,
-                    state_class=SensorStateClass.MEASUREMENT,
-                ),
-                f"outlet.{outlet_num_str}.realpower": SensorEntityDescription(
-                    key=f"outlet.{outlet_num_str}.realpower",
-                    translation_key="outlet_number_realpower",
-                    translation_placeholders={"outlet_name": outlet_name},
-                    native_unit_of_measurement=UnitOfPower.WATT,
-                    device_class=SensorDeviceClass.POWER,
-                    state_class=SensorStateClass.MEASUREMENT,
-                ),
-            }
+        additional_sensor_types: dict[str, SensorEntityDescription] = {}
 
-    # Dynamically add per-input sensors (input.<n>.*), e.g. for transfer switches
-    for sensor_id in status:
-        prefix, _, rest = sensor_id.partition(".")
-        input_num, _, variable = rest.partition(".")
-        if (
-            prefix == "input"
-            and input_num.isdigit()
-            and (description := INPUT_NUMBER_SENSOR_TYPES.get(variable))
-        ):
-            additional_sensor_types[sensor_id] = replace(
-                description,
-                key=sensor_id,
-                translation_placeholders={"input_number": input_num},
-            )
+        # Dynamically add outlet sensors to valid sensors dictionary
+        if outlet_numbers := outlet_numbers_from_status(status):
+            for outlet_num in sorted(outlet_numbers):
+                outlet_num_str: str = str(outlet_num)
+                outlet_name: str = (
+                    status.get(f"outlet.{outlet_num_str}.name")
+                    or status.get(f"outlet.{outlet_num_str}.desc")
+                    or outlet_num_str
+                )
+                additional_sensor_types |= {
+                    f"outlet.{outlet_num_str}.current": SensorEntityDescription(
+                        key=f"outlet.{outlet_num_str}.current",
+                        translation_key="outlet_number_current",
+                        translation_placeholders={"outlet_name": outlet_name},
+                        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+                        device_class=SensorDeviceClass.CURRENT,
+                        state_class=SensorStateClass.MEASUREMENT,
+                    ),
+                    f"outlet.{outlet_num_str}.current_status": SensorEntityDescription(
+                        key=f"outlet.{outlet_num_str}.current_status",
+                        translation_key="outlet_number_current_status",
+                        translation_placeholders={"outlet_name": outlet_name},
+                        entity_category=EntityCategory.DIAGNOSTIC,
+                        entity_registry_enabled_default=False,
+                    ),
+                    f"outlet.{outlet_num_str}.desc": SensorEntityDescription(
+                        key=f"outlet.{outlet_num_str}.desc",
+                        translation_key="outlet_number_desc",
+                        translation_placeholders={"outlet_name": outlet_name},
+                    ),
+                    f"outlet.{outlet_num_str}.power": SensorEntityDescription(
+                        key=f"outlet.{outlet_num_str}.power",
+                        translation_key="outlet_number_power",
+                        translation_placeholders={"outlet_name": outlet_name},
+                        native_unit_of_measurement=UnitOfApparentPower.VOLT_AMPERE,
+                        device_class=SensorDeviceClass.APPARENT_POWER,
+                        state_class=SensorStateClass.MEASUREMENT,
+                    ),
+                    f"outlet.{outlet_num_str}.realpower": SensorEntityDescription(
+                        key=f"outlet.{outlet_num_str}.realpower",
+                        translation_key="outlet_number_realpower",
+                        translation_placeholders={"outlet_name": outlet_name},
+                        native_unit_of_measurement=UnitOfPower.WATT,
+                        device_class=SensorDeviceClass.POWER,
+                        state_class=SensorStateClass.MEASUREMENT,
+                    ),
+                }
 
-    valid_sensor_types = {**SENSOR_TYPES, **additional_sensor_types}
+        # Dynamically add per-input sensors (input.<n>.*), e.g. for transfer switches
+        for sensor_id in status:
+            prefix, _, rest = sensor_id.partition(".")
+            input_num, _, variable = rest.partition(".")
+            if (
+                prefix == "input"
+                and input_num.isdigit()
+                and (description := INPUT_NUMBER_SENSOR_TYPES.get(variable))
+            ):
+                additional_sensor_types[sensor_id] = replace(
+                    description,
+                    key=sensor_id,
+                    translation_placeholders={"input_number": input_num},
+                )
 
-    # If device reports ambient sensors are not present, then remove
-    has_ambient_sensors: bool = status.get(AMBIENT_PRESENT) != "no"
-    resources = [
-        sensor_id
-        for sensor_id in valid_sensor_types
-        if sensor_id in status
-        and (has_ambient_sensors or sensor_id not in AMBIENT_SENSORS)
-    ]
+        valid_sensor_types = {**SENSOR_TYPES, **additional_sensor_types}
 
-    # Display status is a special case that falls back to the status value
-    # of the UPS instead.
-    if KEY_STATUS in status:
-        resources.append(KEY_STATUS_DISPLAY)
+        # If device reports ambient sensors are not present, then remove
+        has_ambient_sensors: bool = status.get(AMBIENT_PRESENT) != "no"
+        resources = [
+            sensor_id
+            for sensor_id in valid_sensor_types
+            if sensor_id in status
+            and (has_ambient_sensors or sensor_id not in AMBIENT_SENSORS)
+        ]
 
-    async_add_entities(
-        NUTSensor(
-            coordinator,
-            valid_sensor_types[sensor_type],
-            data,
-            unique_id,
+        # Display status is a special case that falls back to the status value
+        # of the UPS instead.
+        if KEY_STATUS in status:
+            resources.append(KEY_STATUS_DISPLAY)
+
+        async_add_entities(
+            [
+                NUTSensor(
+                    coordinator,
+                    valid_sensor_types[sensor_type],
+                    data,
+                    unique_id,
+                )
+                for sensor_type in resources
+                if sensor_type not in discovered
+            ]
         )
-        for sensor_type in resources
+
+        discovered.update(resources)
+
+    config_entry.async_on_unload(
+        coordinator.async_add_listener(async_discover_entities)
     )
+    async_discover_entities()
 
 
 class NUTSensor(NUTBaseEntity, SensorEntity):

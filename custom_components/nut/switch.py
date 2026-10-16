@@ -8,7 +8,7 @@ from homeassistant.components.switch import (
     SwitchEntity,
     SwitchEntityDescription,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import outlet_numbers_from_status
@@ -28,36 +28,53 @@ async def async_setup_entry(
     """Set up the NUT switches."""
     pynut_data = config_entry.runtime_data
     coordinator = pynut_data.coordinator
-    status = coordinator.data
-    data = pynut_data.data
-    unique_id = pynut_data.unique_id
-    user_available_commands = pynut_data.user_available_commands
+    discovered: set[str] = set()
 
-    switch_descriptions = [
-        SwitchEntityDescription(
-            key=f"outlet.{outlet_num}.load.poweronoff",
-            translation_key="outlet_number_load_poweronoff",
-            translation_placeholders={
-                "outlet_name": (
-                    status.get(f"outlet.{outlet_num}.name")
-                    or status.get(f"outlet.{outlet_num}.desc")
-                    or str(outlet_num)
-                )
-            },
-            device_class=SwitchDeviceClass.OUTLET,
-        )
-        for outlet_num in sorted(outlet_numbers_from_status(status))
-        if (
-            status.get(f"outlet.{outlet_num}.switchable") == "yes"
-            and f"outlet.{outlet_num}.load.on" in user_available_commands
-            and f"outlet.{outlet_num}.load.off" in user_available_commands
-        )
-    ]
+    @callback
+    def async_discover_entities() -> None:
+        """Add newly available entities once during this entry's lifetime."""
+        if not coordinator.last_update_success:
+            return
+        status = coordinator.data
+        data = pynut_data.data
+        unique_id = pynut_data.unique_id
+        user_available_commands = pynut_data.user_available_commands
 
-    async_add_entities(
-        NUTSwitch(coordinator, description, data, unique_id)
-        for description in switch_descriptions
+        switch_descriptions = [
+            SwitchEntityDescription(
+                key=f"outlet.{outlet_num}.load.poweronoff",
+                translation_key="outlet_number_load_poweronoff",
+                translation_placeholders={
+                    "outlet_name": (
+                        status.get(f"outlet.{outlet_num}.name")
+                        or status.get(f"outlet.{outlet_num}.desc")
+                        or str(outlet_num)
+                    )
+                },
+                device_class=SwitchDeviceClass.OUTLET,
+            )
+            for outlet_num in sorted(outlet_numbers_from_status(status))
+            if (
+                status.get(f"outlet.{outlet_num}.switchable") == "yes"
+                and f"outlet.{outlet_num}.load.on" in user_available_commands
+                and f"outlet.{outlet_num}.load.off" in user_available_commands
+            )
+        ]
+
+        async_add_entities(
+            [
+                NUTSwitch(coordinator, description, data, unique_id)
+                for description in switch_descriptions
+                if description.key not in discovered
+            ]
+        )
+
+        discovered.update(description.key for description in switch_descriptions)
+
+    config_entry.async_on_unload(
+        coordinator.async_add_listener(async_discover_entities)
     )
+    async_discover_entities()
 
 
 class NUTSwitch(NUTBaseEntity, SwitchEntity):

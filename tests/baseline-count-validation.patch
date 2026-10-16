@@ -1,0 +1,22 @@
+--- a/tests/test_switch.py
++++ b/tests/test_switch.py
+@@ -8,0 +9 @@
++from homeassistant.config_entries import ConfigEntryState
+@@ -269,5 +270,5 @@
+-async def test_switch_invalid_outlet_count_falls_back(
+-    hass: HomeAssistant,
+-    entity_registry: er.EntityRegistry,
+-) -> None:
+-    """Test a non-numeric outlet.count falls back to status-key discovery."""
++async def test_switch_invalid_outlet_count_retries(
++    hass: HomeAssistant,
++    entity_registry: er.EntityRegistry,
++) -> None:
++    """Test a non-numeric outlet.count is rejected with a controlled setup retry."""
+@@ -290,4 +291,2 @@
+-    entity_id = "switch.ups1_power_outlet_powershare_outlet_1"
+-    entry = entity_registry.async_get(entity_id)
+-    assert entry
+-    assert entry.unique_id == f"{config_entry.entry_id}_outlet.1.load.poweronoff"
++    assert config_entry.state is ConfigEntryState.SETUP_RETRY
++    assert not hass.states.get("switch.ups1_power_outlet_powershare_outlet_1")

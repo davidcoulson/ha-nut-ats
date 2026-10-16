@@ -21,8 +21,11 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, format_mac
 
-from .const import DOMAIN, INTEGRATION_SUPPORTED_COMMANDS, PLATFORMS
+from .const import DOMAIN, PLATFORMS
 from .coordinator import NutConfigEntry, NutCoordinator, NutRuntimeData
+
+# Bound device-provided counts before creating per-outlet entities (large PDUs included).
+MAX_OUTLETS = 1024
 
 NUT_FAKE_SERIAL = ["unknown", "blank"]
 
@@ -35,14 +38,18 @@ def outlet_numbers_from_status(status: dict[str, str]) -> set[int]:
     Use ``outlet.count`` when the device reports it. Otherwise fall back to
     discovering outlets from ``outlet.<n>.*`` status keys, so devices that
     expose switchable outlets without reporting a count are still detected.
+    Limit discovery to 1024 outlets (including large PDUs) to bound allocations
+    from device-provided values. Invalid counts fail setup or the current poll.
     """
     if (num_outlets := status.get("outlet.count")) is not None:
-        try:
-            count = int(num_outlets)
-        except ValueError:
-            _LOGGER.debug("Invalid outlet.count value: %s", num_outlets)
-        else:
-            return set(range(1, count + 1))
+        if (
+            not num_outlets.isascii()
+            or not num_outlets.isdecimal()
+            or len(num_outlets) > 4
+            or (count := int(num_outlets)) > MAX_OUTLETS
+        ):
+            raise NUTError(f"Invalid outlet.count value: {num_outlets}")
+        return set(range(1, count + 1))
 
     outlet_numbers: set[int] = set()
     prefix = "outlet."
@@ -51,7 +58,12 @@ def outlet_numbers_from_status(status: dict[str, str]) -> set[int]:
         if rest == key:
             continue
         number = rest.split(".", 1)[0]
-        if number.isdigit() and int(number) > 0:
+        if (
+            number.isascii()
+            and number.isdecimal()
+            and len(number) <= 4
+            and 0 < int(number) <= MAX_OUTLETS
+        ):
             outlet_numbers.add(int(number))
 
     return outlet_numbers
@@ -99,49 +111,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: NutConfigEntry) -> bool:
 
     _LOGGER.debug("NUT Sensors Available: %s", status or None)
 
-    unique_id = _unique_id_from_status(status)
-    if unique_id is None:
+    device_registry = dr.async_get(hass)
+    if entry.unique_id is None and device_registry.async_get_device_by_identifier(
+        (DOMAIN, entry.entry_id), entry.entry_id
+    ):
+        # Legacy entries may already own entities identified by their entry ID.
         unique_id = entry.entry_id
-
-    elif entry.unique_id is None:
+    else:
+        unique_id = entry.unique_id or _unique_id_from_status(status) or entry.entry_id
+    if entry.unique_id is None and unique_id != entry.entry_id:
         hass.config_entries.async_update_entry(entry, unique_id=unique_id)
 
-    if username is not None and password is not None:
-        # Dynamically add outlet integration commands for every detected outlet
-        additional_integration_commands = set()
-        for outlet_num in outlet_numbers_from_status(status):
-            additional_integration_commands |= {
-                f"outlet.{outlet_num}.load.cycle",
-                f"outlet.{outlet_num}.load.on",
-                f"outlet.{outlet_num}.load.off",
-            }
-
-        valid_integration_commands = (
-            INTEGRATION_SUPPORTED_COMMANDS | additional_integration_commands
-        )
-
-        user_available_commands = {
-            device_command
-            for device_command in await data.async_list_commands() or {}
-            if device_command in valid_integration_commands
-        }
-    else:
-        user_available_commands = set()
-
-    _LOGGER.debug(
-        "NUT Commands Available: %s",
-        user_available_commands or None,
-    )
-
     entry.runtime_data = NutRuntimeData(
-        coordinator, data, unique_id, user_available_commands
+        coordinator, data, unique_id, coordinator.user_available_commands
     )
 
     connections: set[tuple[str, str]] | None = None
     if data.device_info.mac_address is not None:
         connections = {(CONNECTION_NETWORK_MAC, data.device_info.mac_address)}
 
-    device_registry = dr.async_get(hass)
     device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, unique_id)},

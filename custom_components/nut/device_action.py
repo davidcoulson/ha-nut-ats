@@ -36,6 +36,7 @@ async def async_get_actions(
     return [
         {CONF_TYPE: _get_device_action_name(command_name)} | base_action
         for command_name in runtime_data.user_available_commands
+        if command_name in INTEGRATION_SUPPORTED_COMMANDS
     ]
 
 
