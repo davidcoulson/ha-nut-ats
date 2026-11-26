@@ -23,7 +23,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, format_mac
 from homeassistant.helpers.service import async_register_admin_service
-from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN, PLATFORMS
 from .coordinator import NutConfigEntry, NutCoordinator, NutRuntimeData
@@ -378,6 +377,12 @@ class PyNUTData:
         self._client.shutdown()
 
 
+def _import_code(package: str) -> None:
+    """Import the new package and its platforms in the executor, so HA's own import is a cache hit."""
+    for platform in importlib.import_module(package).PLATFORMS:
+        importlib.import_module(f"{package}.{platform}")
+
+
 def _forget_code(hass: HomeAssistant, package: str, domain: str) -> None:
     """Drop a package's modules so the next setup imports them from disk again.
 
@@ -410,7 +415,7 @@ def _register_reload_code(hass: HomeAssistant) -> None:
                 )
         _forget_code(hass, __name__, DOMAIN)
         try:
-            await (await async_get_integration(hass, DOMAIN)).async_get_component()
+            await hass.async_add_import_executor_job(_import_code, __name__)
         except Exception as err:
             # This handler stays registered, so the action works again once the code is fixed.
             raise HomeAssistantError(
