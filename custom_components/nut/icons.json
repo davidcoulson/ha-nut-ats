@@ -184,5 +184,10 @@
         "default": "mdi:power"
       }
     }
+  },
+  "services": {
+    "reload_code": {
+      "service": "mdi:code-braces"
+    }
   }
 }
